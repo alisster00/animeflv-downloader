@@ -160,7 +160,7 @@ def main():
                 f.write(f"Episodio {ep_num}: ERROR\n")
                 continue
 
-            direct_link = resolve_link(session, mega_page)
+            direct_link = mega_page
 
             if direct_link:
                 print(f"[+] Link: {direct_link}")
