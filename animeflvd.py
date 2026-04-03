@@ -2,47 +2,71 @@ import argparse
 import requests
 from bs4 import BeautifulSoup
 import json
-import base64
+import os
 import time
 import re
 import subprocess
 from urllib.parse import urlparse
 import signal
 import sys
-import ast 
+import ast
 
+# ======================= #
+# CONFIGURACIÓN PRINCIPAL #
+# ======================= #
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "en-US,en;q=0.9"
 }
 
-DELAY_EPISODES = 2
+DELAY_EPISODES = 1
 DELAY_DOWNLOADS = 5
 
+# control de salida del programa
 def def_handler(sig, frame):
     print("\n\n[!] Saliendo...")
     sys.exit(1)
 
 signal.signal(signal.SIGINT, def_handler)
 
+# manejo de la url
 def get_base_url(url):
     parsed = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
 
-def decode_cookie(cookie_value):
-    try:
-        cookie_value = cookie_value.replace('-', '+').replace('_', '/')
-        padding = '=' * (-len(cookie_value) % 4)
-        cookie_value += padding
-
-        decoded = base64.b64decode(cookie_value).decode('utf-8')
-        return json.loads(decoded)
-    except:
-        return None
-
+# manejo del nombre del anime a través de su url
 def get_anime_name(url):
     return url.rstrip("/").split("/")[-1]
 
+# formato del título
+def format_anime_title(anime_name):
+    """El nombre del archivo pasa de 'naruto-shippuden' a 'Naruto Shippuden'"""
+    return anime_name.replace("-", " ").title()
+
+# nombramiento a los archivos .mp4 descargados
+def episode_filename(anime_title, ep_num):
+    """Genera el nombre del archivo: 'Naruto - Episodio 1.mp4'"""
+    return f"{anime_title} - Episodio {ep_num}.mp4"
+
+# se crea una estructura de directorios por cada anime
+def setup_dirs(anime_name):
+    """
+    Crea la estructura de directorios:
+        Anime Title/
+        └── links/
+    """
+    anime_title = format_anime_title(anime_name)
+    anime_dir = anime_title
+    links_dir = os.path.join(anime_dir, "links")
+
+    os.makedirs(links_dir, exist_ok=True)
+
+    print(f"[+] Directorio creado: {anime_dir}/")
+    return anime_dir, links_dir, anime_title
+
+# =================================== #
+# EXTRACCIÓN DE LA LISTA DE EPISODIOS #
+# =======[desde el JavaScript]======= #
 def get_episode_list(session, anime_url, base_url):
     print("[+] Obteniendo lista de episodios...")
 
@@ -69,114 +93,185 @@ def get_episode_list(session, anime_url, base_url):
 
     return episodes
 
-def get_mega_link(session, episode_url):
+# ============================= #
+# EXTRAER LINKS (MULTISERVIDOR) #
+# ====[Mega, 1Fichier, etc]==== #
+def extract_links(session, episode_url):
     try:
         res = session.get(episode_url, headers=HEADERS)
         soup = BeautifulSoup(res.text, "html.parser")
+
+        links = {}
 
         rows = soup.find_all("tr")
 
         for row in rows:
             cols = row.find_all("td")
 
-            if len(cols) >= 1 and cols[0].text.strip() == "MEGA":
-                a_tag = row.find("a", href=True)
-                if a_tag:
-                    return a_tag["href"]
+            if len(cols) < 2:
+                continue
 
-        return None
+            server = cols[0].text.strip()
+            a_tag = row.find("a", href=True)
 
-    except Exception as e:
-        print(f"[!] Error obteniendo links de MEGA: {e}")
-        return None
+            if not a_tag:
+                continue
 
-def resolve_link(session, linkinpork_url):
-    try:
-        session.get(linkinpork_url, headers=HEADERS)
+            href = a_tag["href"]
 
-        cookie = session.cookies.get("_cf_uid")
+            if server not in links:
+                links[server] = []
 
-        if not cookie:
-            return None
+            links[server].append(href)
 
-        data = decode_cookie(cookie)
-
-        if not data:
-            return None
-
-        return data.get("url")
+        return links
 
     except Exception as e:
-        print(f"[!] Error resolviendo link: {e}")
-        return None
+        print(f"[x] Error extrayendo links: {e}")
+        return {}
 
-def download_mega(link, episode_num):
+# ================================ #
+# GUARDAR LOS RESULTADOS OBTENIDOS #
+# ======[ej: anime-mega.txt]====== #
+def save_links(all_links, anime_name, links_dir, anime_title):
+    print("\n[+] Guardando archivos de enlaces extraídos...")
+
+    for server, entries in all_links.items():
+        filename = os.path.join(links_dir, f"{anime_title} - {server}.txt")
+
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"Anime: {anime_title}\n")
+            f.write(f"Servidor: {server}\n\n")
+
+            for ep_num, link in entries:
+                if link:
+                    f.write(f"Episodio {ep_num}: {link}\n")
+                else:
+                    f.write(f"Episodio {ep_num}: ERROR\n")
+
+        print(f"[+] {filename}")
+
+# =============================== #
+# DESCARGAR DESDE UN ARCHIVO .TXT #
+# ==========[solo MEGA]========== #
+def download_from_file(file_path):
+    print(f"[+] Leyendo archivo: {file_path}")
+
     try:
-        print(f"[+] Descargando episodio {episode_num}...")
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
 
-        subprocess.run([
-            "megadl",
-            "--path", f"episodio_{episode_num}.mp4",
-            link
-        ], check=True)
+    except Exception:
+        print(f"[x] No se pudo leer el archivo")
+        return
 
-        print(f"[+] Episodio {episode_num} descargado")
+    # leer los metadatos del encabezado
+    anime_title = None
+    for line in lines:
+        if line.lower().startswith("anime:"):
+            anime_title = line.split(":", 1)[1].strip()
+            break
 
-    except subprocess.CalledProcessError:
-        print(f"[!] Error descargando episodio {episode_num}")
+    if not anime_title:
+        print(f"[x] No se encontró el nombre del anime en el archivo")
+        return
 
-def main():
-    parser = argparse.ArgumentParser(description="AnimeFLV Scraper + Downloader")
-    parser.add_argument("-u", "--url", required=True, help="URL del anime")
-    parser.add_argument("--no-download", action="store_true", help="Solo obtener links")
+    # directorio destino con el mismo nombre del anime
+    anime_dir = anime_title
+    os.makedirs(anime_dir, exist_ok=True)
 
-    args = parser.parse_args()
+    # parsear episodios
+    entries = [] # lista de (ep_num, link)
+    for line in lines:
+        if "http" not in line:
+            continue
+        m = re.match(r'Episodio\s+(\d+):\s+(http\S+)', line.strip())
+        if m:
+            entries.append((int(m.group(1)), m.group(2)))
 
-    anime_url = args.url
+    print(f"[+] Enlaces encontrados: {len(entries)}\n")
+
+    for ep_num, link in entries:
+        dest = os.path.join(anime_dir, episode_filename(anime_title, ep_num))
+
+        # omitir si el episodio ya existe
+        if os.path.exists(dest):
+            print(f"[=] Episodio {ep_num} ya descargado. Omitiendo...")
+            continue
+
+        print(f"[↓] Descargando episodio {ep_num}")
+
+        try:
+            subprocess.run([
+                "megadl",
+                "--path", dest,
+                link
+            ], check=True)
+
+            print(f"[✓] Episodio {ep_num} descargado")
+
+        except subprocess.CalledProcessError:
+            print(f"[x] Error con el episodio {ep_num}")
+
+        time.sleep(DELAY_DOWNLOADS)
+
+# ================= #
+# SCRAPER PRINCIPAL #
+# ================= #
+def scraper(anime_url):
+    session = requests.Session()
+
     base_url = get_base_url(anime_url)
     anime_name = get_anime_name(anime_url)
 
-    output_file = f"{anime_name}-mega.txt"
-
-    session = requests.Session()
+    anime_dir, links_dir, anime_title = setup_dirs(anime_name)
 
     episodes = get_episode_list(session, anime_url, base_url)
 
+    all_links = {}
+
     print("\n[+] Procesando episodios...\n")
 
-    with open(output_file, "w", encoding="utf-8") as f:
+    for ep_num, ep_url in episodes:
+        print(f"[+] Episodio {ep_num}")
 
-        f.write(f"Anime: {anime_name}\n")
-        f.write("Servidor: MEGA\n\n")
+        ep_links = extract_links(session, ep_url)
 
-        for ep_num, ep_url in episodes:
+        for server, links in ep_links.items():
+            if server not in all_links:
+                all_links[server] = []
 
-            print(f"[+] Episodio {ep_num}")
+            link = links[0] if links else None
+            all_links[server].append((ep_num, link))
 
-            mega_page = get_mega_link(session, ep_url)
+        time.sleep(DELAY_EPISODES)
 
-            if not mega_page:
-                print("[!] No tiene link MEGA")
-                f.write(f"Episodio {ep_num}: ERROR\n")
-                continue
+    save_links(all_links, anime_name, links_dir, anime_title)
 
-            direct_link = mega_page
+# ================= #
+# FUNCIÓN PRINCIPAL #
+# ================= #
+def main():
+    parser = argparse.ArgumentParser(description="AnimeFLV Tool")
 
-            if direct_link:
-                print(f"[+] Link: {direct_link}")
-                f.write(f"Episodio {ep_num}: {direct_link}\n")
+    parser.add_argument("-u", "--url", help="URL del anime (modo scraping)")
+    parser.add_argument("-f", "--file", help="Archivo .txt de enlaces (modo descarga)")
 
-                if not args.no_download:
-                    download_mega(direct_link, ep_num)
-                    time.sleep(DELAY_DOWNLOADS)
+    args = parser.parse_args()
 
-            else:
-                print("[!] No se pudo resolver")
-                f.write(f"Episodio {ep_num}: ERROR\n")
+    if args.url and args.file:
+        print("[!] No puedes usar -u y -f al mismo tiempo")
+        return
 
-            time.sleep(DELAY_EPISODES)
+    if not args.url and not args.file:
+        print(f"[!] Debes usar -u [URL] o -f [FILE]")
+        return
 
-    print(f"\n[+] Links guardados en {output_file}")
+    if args.url:
+        scraper(args.url)
+
+    elif args.file:
+        download_from_file(args.file)
 
 if __name__ == "__main__":
     main()
