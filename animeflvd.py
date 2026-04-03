@@ -9,10 +9,10 @@ import subprocess
 from urllib.parse import urlparse
 import signal
 import sys
-import ast 
+import ast
 
-# ======================= # 
-# CONFIGURACIÓN PRINCIPAL # 
+# ======================= #
+# CONFIGURACIÓN PRINCIPAL #
 # ======================= #
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -38,7 +38,7 @@ def get_base_url(url):
 def get_anime_name(url):
     return url.rstrip("/").split("/")[-1]
 
-# formato del título 
+# formato del título
 def format_anime_title(anime_name):
     """El nombre del archivo pasa de 'naruto-shippuden' a 'Naruto Shippuden'"""
     return anime_name.replace("-", " ").title()
@@ -65,7 +65,7 @@ def setup_dirs(anime_name):
     return anime_dir, links_dir, anime_title
 
 # =================================== #
-# EXTRACCIÓN DE LA LISTA DE EPISODIOS # 
+# EXTRACCIÓN DE LA LISTA DE EPISODIOS #
 # =======[desde el JavaScript]======= #
 def get_episode_list(session, anime_url, base_url):
     print("[+] Obteniendo lista de episodios...")
@@ -94,7 +94,7 @@ def get_episode_list(session, anime_url, base_url):
     return episodes
 
 # ============================= #
-# EXTRAER LINKS (MULTISERVIDOR) # 
+# EXTRAER LINKS (MULTISERVIDOR) #
 # ====[Mega, 1Fichier, etc]==== #
 def extract_links(session, episode_url):
     try:
@@ -113,10 +113,10 @@ def extract_links(session, episode_url):
 
             server = cols[0].text.strip()
             a_tag = row.find("a", href=True)
-            
+
             if not a_tag:
                 continue
-           
+
             href = a_tag["href"]
 
             if server not in links:
@@ -151,7 +151,7 @@ def save_links(all_links, anime_name, links_dir, anime_title):
 
         print(f"[+] {filename}")
 
-# =============================== # 
+# =============================== #
 # DESCARGAR DESDE UN ARCHIVO .TXT #
 # ==========[solo MEGA]========== #
 def download_from_file(file_path):
@@ -204,7 +204,7 @@ def download_from_file(file_path):
         try:
             subprocess.run([
                 "megadl",
-                "--path", dest, 
+                "--path", dest,
                 link
             ], check=True)
 
@@ -225,9 +225,9 @@ def scraper(anime_url):
     anime_name = get_anime_name(anime_url)
 
     anime_dir, links_dir, anime_title = setup_dirs(anime_name)
-    
+
     episodes = get_episode_list(session, anime_url, base_url)
-    
+
     all_links = {}
 
     print("\n[+] Procesando episodios...\n")
@@ -249,11 +249,11 @@ def scraper(anime_url):
     save_links(all_links, anime_name, links_dir, anime_title)
 
 # ================= #
-# FUNCIÓN PRINCIPAL # 
+# FUNCIÓN PRINCIPAL #
 # ================= #
 def main():
     parser = argparse.ArgumentParser(description="AnimeFLV Tool")
-    
+
     parser.add_argument("-u", "--url", help="URL del anime (modo scraping)")
     parser.add_argument("-f", "--file", help="Archivo .txt de enlaces (modo descarga)")
 
@@ -263,7 +263,7 @@ def main():
         print("[!] No puedes usar -u y -f al mismo tiempo")
         return
 
-    if not args.url and not args.file: 
+    if not args.url and not args.file:
         print(f"[!] Debes usar -u [URL] o -f [FILE]")
         return
 
